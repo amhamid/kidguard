@@ -1,0 +1,16 @@
+version: "3.9"
+services:
+  kidguard:
+    build: .
+    restart: unless-stopped
+    network_mode: host
+    volumes:
+      - ./config.yaml:/app/config.yaml:ro
+      - ./data:/app/data
+      - ./blocklists:/app/blocklists
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - SMTP_USERNAME=${SMTP_USERNAME}
+      - SMTP_PASSWORD=${SMTP_PASSWORD}
+      - DATABASE_URL=sqlite:///app/data/kidguard.db
+      - RUST_LOG=info

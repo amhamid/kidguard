@@ -1,0 +1,51 @@
+dns:
+  listen_addr: "0.0.0.0:53"
+  upstream_servers:
+    - "1.1.1.1:53"
+    - "8.8.8.8:53"
+  timeout_ms: 2000
+
+blocklist:
+  # Curated public lists — fetched and cached, re-synced daily
+  sources:
+    - name: "stevenblack"
+      url: "https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts"
+      category: "ads_malware"
+    - name: "oisd_small"
+      url: "https://small.oisd.nl/domainswild"
+      category: "general"
+    - name: "adult"
+      url: "https://raw.githubusercontent.com/StevenBlack/hosts/master/alternates/porn-only/hosts"
+      category: "adult"
+
+  # Your own additions — merged on top of the lists above
+  custom_block:
+    - "tiktok.com"
+    - "snapchat.com"
+    - "reddit.com"
+    - "4chan.org"
+    - "roblox.com"
+
+  # Always allowed — wins over everything including blocklist sources
+  custom_allow:
+    - "khanacademy.org"
+    - "scratch.mit.edu"
+
+  sync_interval_hours: 24
+  cache_dir: "./blocklists"
+
+database:
+  path: "./data/kidguard.db"
+
+analyzer:
+  schedule: "0 0 7 * * *"    # Daily at 7am (sec min hour day month weekday)
+  lookback_days: 1
+  report_top_domains: 15
+
+reporter:
+  smtp_host: "smtp.gmail.com"
+  smtp_port: 587
+  from_email: "you@gmail.com"
+  to_emails:
+    - "someone@gmail.com"
+    - "another@gmail.com"
