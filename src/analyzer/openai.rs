@@ -39,7 +39,7 @@ impl OpenAiAnalyzer {
         let user_message = serde_json::to_string_pretty(summary)?;
 
         let body = json!({
-            "model": "gpt-4o",
+            "model": "gpt-5.4-mini",
             "max_tokens": 500,
             "messages": [
                 { "role": "system", "content": SYSTEM_PROMPT },
