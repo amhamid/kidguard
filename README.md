@@ -137,11 +137,27 @@ blocklist:
     - "ytimg.com"
     - "yt3.ggpht.com"
     - "googlevideo.com"
+    # Gaming sites
+    - "poki.com"
+    - "poki-cdn.com"
+    - "poki-gdn.com"
+    - "crazygames.com"
+    - "crazygames.io"
+    - "crazygames-cdn.com"
+    - "roblox.com"
+    - "rbxcdn.com"
+    - "roblox.cn"
     # Social media
     - "snapchat.com"
+    - "snapkit.co"
+    - "snap.com"
+    - "snapchat.map.fastly.net"
     - "reddit.com"
+    - "redd.it"
+    - "redditstatic.com"
+    - "redditmedia.com"
     - "4chan.org"
-    - "roblox.com"
+    - "4cdn.org"
 
   custom_allow:
     - "khanacademy.org"
