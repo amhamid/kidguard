@@ -16,11 +16,15 @@ async fn main() -> anyhow::Result<()> {
     // Load .env and config
     let app_config = config::load()?;
 
-    // Init tracing
+    // Init tracing — user can override with RUST_LOG env var
     tracing_subscriber::fmt()
         .with_env_filter(
-            tracing_subscriber::EnvFilter::from_default_env()
-                .add_directive("kidguard=info".parse()?),
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| {
+                    "kidguard=info,hickory_server=warn,tokio_cron_scheduler=warn"
+                        .parse()
+                        .expect("valid default filter")
+                }),
         )
         .init();
 

@@ -9,7 +9,7 @@ use hickory_proto::rr::{RData, Record};
 use hickory_server::authority::MessageResponseBuilder;
 use hickory_server::server::{Request, RequestHandler, ResponseHandler, ResponseInfo};
 use tokio::sync::RwLock;
-use tracing::{debug, error, info};
+use tracing::{error, info};
 
 use crate::blocklist::matcher::BlocklistMatcher;
 use crate::config::FilteredClient;
@@ -132,19 +132,26 @@ impl RequestHandler for DnsHandler {
 
         let (should_filter, client_name) = self.client_filter.check_client(&client_ip);
 
-        debug!("DNS query: {} {:?} from {} ({})", domain, query_type, client_ip,
-            client_name.as_deref().unwrap_or("unfiltered"));
+        if !should_filter {
+            // Unfiltered client — forward silently, no logging
+            let response_info = match self.forwarder.forward(request.query().name(), query_type).await {
+                Ok(records) => send_response(request, &mut response_handle, &records).await,
+                Err(_) => send_servfail(request, &mut response_handle).await,
+            };
+            return response_info;
+        }
 
-        // Check blocklist (only for filtered clients)
-        let block_result = if should_filter {
+        let display_name = client_name.as_deref().unwrap_or(&client_ip);
+        info!("[{}] {} {:?}", display_name, domain, query_type);
+
+        // Check blocklist
+        let block_result = {
             let guard = self.matcher.read().await;
             guard.is_blocked(&domain)
-        } else {
-            None
         };
 
         if let Some(result) = block_result {
-            info!("BLOCKED {} (rule: {}, category: {})", domain, result.rule, result.category);
+            info!("[{}] BLOCKED {} (rule: {}, category: {})", display_name, domain, result.rule, result.category);
             let response_info = send_nxdomain(request, &mut response_handle).await;
 
             // Fire-and-forget log
@@ -174,27 +181,29 @@ impl RequestHandler for DnsHandler {
                 (info, resolved_ip)
             }
             Err(e) => {
-                error!("Forward error for {}: {}", domain, e);
+                error!("[{}] Forward error for {}: {}", display_name, domain, e);
                 let info = send_servfail(request, &mut response_handle).await;
                 (info, None)
             }
         };
 
-        // Fire-and-forget log
-        let db = self.db.clone();
-        let entry = QueryLog {
-            timestamp: Utc::now(),
-            client_ip,
-            client_name,
-            domain,
-            query_type: format!("{:?}", query_type),
-            blocked: false,
-            blocked_rule: None,
-            category: None,
-            resolved_ip,
-            response_ms: start.elapsed().as_millis() as i64,
-        };
-        tokio::spawn(async move { db.log(entry).await });
+        // Only log filtered clients
+        if should_filter {
+            let db = self.db.clone();
+            let entry = QueryLog {
+                timestamp: Utc::now(),
+                client_ip,
+                client_name,
+                domain,
+                query_type: format!("{:?}", query_type),
+                blocked: false,
+                blocked_rule: None,
+                category: None,
+                resolved_ip,
+                response_ms: start.elapsed().as_millis() as i64,
+            };
+            tokio::spawn(async move { db.log(entry).await });
+        }
 
         response_info
     }
