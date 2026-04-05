@@ -5,30 +5,34 @@ use tracing::info;
 
 use crate::config::AppConfig;
 use crate::logger::db::DbLogger;
+use crate::reporter::email::ClientReport;
 
-use self::aggregator::DailySummary;
-
-/// Run the daily analysis: aggregate logs and get AI analysis.
+/// Run the daily analysis: aggregate logs per client and get AI analysis for each.
 pub async fn run(
     config: &AppConfig,
     db: &DbLogger,
     api_key: &str,
-) -> anyhow::Result<(DailySummary, String)> {
+) -> anyhow::Result<Vec<ClientReport>> {
     info!("Starting daily analysis");
 
-    let summary =
+    let summaries =
         aggregator::build(db, config.analyzer.lookback_days, config.analyzer.report_top_domains)
             .await?;
 
-    info!(
-        "Summary: {} total queries, {} unique domains, {} blocked",
-        summary.total_queries, summary.unique_domains, summary.blocked_attempts
-    );
-
     let analyzer = openai::OpenAiAnalyzer::new(api_key);
-    let analysis = analyzer.analyze(&summary).await?;
+    let mut reports = Vec::new();
 
-    info!("AI analysis complete");
+    for summary in summaries {
+        info!(
+            "Summary for '{}': {} total queries, {} unique domains, {} blocked",
+            summary.client_name, summary.total_queries, summary.unique_domains, summary.blocked_attempts
+        );
 
-    Ok((summary, analysis))
+        let analysis = analyzer.analyze(&summary).await?;
+        info!("AI analysis complete for '{}'", summary.client_name);
+
+        reports.push(ClientReport { summary, analysis });
+    }
+
+    Ok(reports)
 }

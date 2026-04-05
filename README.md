@@ -60,9 +60,9 @@ Logging is fire-and-forget (via `tokio::spawn`) so it never slows down DNS respo
 ### Daily Reports
 
 Once a day (configurable via cron), KidGuard:
-1. Aggregates the day's DNS logs into a summary (top domains, blocked attempts, activity by hour)
-2. Sends the summary to OpenAI GPT-4o which writes a short, parent-friendly analysis
-3. Emails an HTML report with stats, charts, and the AI analysis
+1. Aggregates the day's DNS logs **per client** (grouped by the names in `filtered_clients`)
+2. Sends each client's summary to OpenAI GPT-5.4-mini for individual, child-specific analysis
+3. Emails a single HTML report with per-child sections — each with their own stats, charts, and AI insights
 
 If OpenAI is unavailable, a plain-text fallback summary is used instead.
 
@@ -96,6 +96,11 @@ dns:
   upstream_servers:
     - "1.1.1.1:53"                # Cloudflare
     - "8.8.8.8:53"                # Google
+  filtered_clients:               # Only filter these devices. Empty = filter all.
+    - name: "Samir's Laptop"      # Name shown in daily reports
+      ip: "192.168.1.100"         # Match by IP
+    - name: "Samir's iPad"
+      mac: "aa:bb:cc:dd:ee:ff"    # Match by MAC (resolved via ARP on Linux)
 
 blocklist:
   custom_block:
@@ -110,7 +115,7 @@ blocklist:
     - "scratch.mit.edu"
 
 analyzer:
-  schedule: "0 0 7 * * *"            # Daily at 7am
+  schedule: "TZ=Europe/Amsterdam 0 0 19 * * *"  # Daily at 19:00 Amsterdam time
 
 reporter:
   to_email: "you@gmail.com"
@@ -143,6 +148,7 @@ sudo mkdir -p /opt/kidguard/data /opt/kidguard/blocklists
 sudo cp target/release/kidguard /opt/kidguard/
 sudo cp config.yaml .env /opt/kidguard/
 sudo cp -r migrations /opt/kidguard/
+sudo chmod 600 /opt/kidguard/.env    # protect credentials
 ```
 
 Create `/etc/systemd/system/kidguard.service`:
@@ -177,6 +183,49 @@ sudo journalctl -u kidguard -f
 
 This auto-starts on boot, restarts on crash, and sends logs to journald.
 
+**Raspberry Pi 3 (production):**
+
+The systemd setup is identical to Ubuntu. The only difference is building the binary — the Pi 3 is ARM, and compiling Rust on it is slow (1GB RAM), so cross-compiling from your dev machine is recommended.
+
+Cross-compile using [cargo-zigbuild](https://github.com/rust-cross/cargo-zigbuild) (no Docker needed):
+
+```bash
+brew install zig              # macOS — or see ziglang.org for Linux
+cargo install cargo-zigbuild
+rustup target add armv7-unknown-linux-gnueabihf   # or aarch64-unknown-linux-gnu for 64-bit Pi OS
+
+# For 32-bit Pi OS (default on Pi 3)
+cargo zigbuild --release --target armv7-unknown-linux-gnueabihf
+
+# For 64-bit Pi OS
+cargo zigbuild --release --target aarch64-unknown-linux-gnu
+```
+
+Then copy the binary to the Pi and follow the same Ubuntu steps above:
+
+```bash
+scp target/armv7-unknown-linux-gnueabihf/release/kidguard pi@<pi-ip>:/tmp/
+ssh pi@<pi-ip>
+
+sudo mkdir -p /opt/kidguard/data /opt/kidguard/blocklists
+sudo mv /tmp/kidguard /opt/kidguard/
+sudo cp config.yaml .env /opt/kidguard/
+sudo cp -r migrations /opt/kidguard/
+sudo chmod 600 /opt/kidguard/.env    # protect credentials
+```
+
+Create the same systemd service as above, then `sudo systemctl enable kidguard && sudo systemctl start kidguard`.
+
+Alternatively, build directly on the Pi (expect ~15-30 min compile time):
+
+```bash
+# Add swap if needed (1GB RAM is tight for rustc)
+sudo fallocate -l 2G /swapfile
+sudo chmod 600 /swapfile && sudo mkswap /swapfile && sudo swapon /swapfile
+
+cargo build --release
+```
+
 **Docker:**
 
 ```bash
@@ -185,17 +234,17 @@ docker compose up -d
 
 ### 3. Point Your Child's Device
 
-On your router (e.g. FritzBox):
+First, reserve a static IP for the machine running KidGuard (e.g. `192.168.1.50`) in your router settings.
 
-1. Reserve a static IP for the machine running KidGuard (e.g. `192.168.1.50`)
-2. Go to the child's device profile in parental controls
-3. Set DNS server to `192.168.1.50`
+**Option A: Router-level (recommended)** — set your router's DNS server to `192.168.1.50`. All devices on the network use KidGuard at home, and automatically use the local network's DNS when away (school, friends' houses). No per-device config needed. Use `filtered_clients` in `config.yaml` to target specific devices by IP or MAC address — unmatched devices pass through unfiltered.
+
+**Option B: Per-device** — on the child's device, go to Wi-Fi / network settings and set the DNS server to `192.168.1.50`. Only that device is filtered, but DNS will fail when the device leaves your home network. You would need to undo this setting before the device goes off-network.
 
 ### 4. Verify
 
 ```bash
 dig @127.0.0.1 -p 53 google.com      # Should resolve
-dig @127.0.0.1 -p 53 roblox.com      # Should resolve (custom_allow)
+dig @127.0.0.1 -p 53 roblox.com      # Should return NXDOMAIN (custom_block)
 dig @127.0.0.1 -p 53 tiktok.com      # Should return NXDOMAIN (custom_block)
 dig @127.0.0.1 -p 53 www.tiktok.com  # Should return NXDOMAIN (subdomain)
 ```
@@ -218,7 +267,7 @@ src/
 │   └── db.rs            # SQLite logging (fire-and-forget writes, range queries)
 ├── analyzer/
 │   ├── aggregator.rs    # Builds DailySummary from log data
-│   └── openai.rs        # Sends summary to GPT-4o, parses response
+│   └── openai.rs        # Sends summary to GPT-5.4-mini, parses response
 └── reporter/
     └── email.rs         # Builds and sends HTML report via SMTP
 ```

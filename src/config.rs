@@ -15,11 +15,25 @@ pub struct AppConfig {
 }
 
 /// DNS server settings.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct DnsConfig {
     pub listen_addr: String,
     pub upstream_servers: Vec<String>,
     pub timeout_ms: u64,
+    /// If set, only these clients are filtered. All other clients pass through unfiltered.
+    /// If empty, all clients are filtered.
+    #[serde(default)]
+    pub filtered_clients: Vec<FilteredClient>,
+}
+
+/// A client device to filter, identified by name and IP/MAC address.
+#[derive(Debug, Clone, Deserialize)]
+pub struct FilteredClient {
+    pub name: String,
+    #[serde(default)]
+    pub ip: Option<String>,
+    #[serde(default)]
+    pub mac: Option<String>,
 }
 
 /// Blocklist configuration including public sources and custom overrides.

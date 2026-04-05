@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use chrono::{Duration, Utc};
+use chrono::{Duration, Timelike, Utc};
 use serde::Serialize;
 
 use crate::logger::db::DbLogger;
@@ -12,9 +12,10 @@ pub struct DomainCount {
     pub count: u32,
 }
 
-/// Aggregated daily DNS activity summary.
+/// Aggregated DNS activity summary for a single client.
 #[derive(Debug, Clone, Serialize)]
-pub struct DailySummary {
+pub struct ClientSummary {
+    pub client_name: String,
     pub date: String,
     pub total_queries: u32,
     pub unique_domains: u32,
@@ -25,18 +26,27 @@ pub struct DailySummary {
     pub categories_blocked: HashMap<String, u32>,
 }
 
-/// Build a daily summary from the database logs.
+/// Build per-client daily summaries from the database logs.
+/// If no client names are present in the logs, returns a single summary named "All Devices".
 pub async fn build(
     db: &DbLogger,
     lookback_days: i64,
     top_n: usize,
-) -> anyhow::Result<DailySummary> {
+) -> anyhow::Result<Vec<ClientSummary>> {
     let now = Utc::now();
     let from = now - Duration::days(lookback_days);
     let date = now.format("%Y-%m-%d").to_string();
 
     let rows = db.query_range(from, now).await?;
+    Ok(build_from_logs(rows, &date, top_n))
+}
 
+fn build_summary(
+    client_name: &str,
+    date: &str,
+    rows: &[crate::logger::db::QueryLog],
+    top_n: usize,
+) -> ClientSummary {
     let total_queries = rows.len() as u32;
     let mut domain_counts: HashMap<String, u32> = HashMap::new();
     let mut blocked_counts: HashMap<String, u32> = HashMap::new();
@@ -44,7 +54,7 @@ pub async fn build(
     let mut category_counts: HashMap<String, u32> = HashMap::new();
     let mut blocked_attempts: u32 = 0;
 
-    for row in &rows {
+    for row in rows {
         *domain_counts.entry(row.domain.clone()).or_default() += 1;
 
         let hour = row.timestamp.hour() as u8;
@@ -60,7 +70,6 @@ pub async fn build(
     }
 
     let unique_domains = domain_counts.len() as u32;
-
     let top_domains = top_n_from_map(&domain_counts, top_n);
     let top_blocked = top_n_from_map(&blocked_counts, top_n);
 
@@ -69,8 +78,9 @@ pub async fn build(
         .collect();
     queries_by_hour.sort_by_key(|(h, _)| *h);
 
-    Ok(DailySummary {
-        date,
+    ClientSummary {
+        client_name: client_name.to_string(),
+        date: date.to_string(),
         total_queries,
         unique_domains,
         blocked_attempts,
@@ -78,7 +88,7 @@ pub async fn build(
         top_blocked,
         queries_by_hour,
         categories_blocked: category_counts,
-    })
+    }
 }
 
 /// Extract the top N entries from a count map, sorted descending.
@@ -95,4 +105,134 @@ fn top_n_from_map(map: &HashMap<String, u32>, n: usize) -> Vec<DomainCount> {
     entries
 }
 
-use chrono::Timelike;
+/// Build per-client summaries from pre-fetched query logs (for testing and direct use).
+pub fn build_from_logs(
+    rows: Vec<crate::logger::db::QueryLog>,
+    date: &str,
+    top_n: usize,
+) -> Vec<ClientSummary> {
+    let mut grouped: HashMap<String, Vec<_>> = HashMap::new();
+    for row in rows {
+        let key = row.client_name.clone().unwrap_or_else(|| "All Devices".to_string());
+        grouped.entry(key).or_default().push(row);
+    }
+
+    if grouped.is_empty() {
+        return vec![ClientSummary {
+            client_name: "All Devices".to_string(),
+            date: date.to_string(),
+            total_queries: 0,
+            unique_domains: 0,
+            blocked_attempts: 0,
+            top_domains: vec![],
+            top_blocked: vec![],
+            queries_by_hour: (0..24).map(|h| (h, 0)).collect(),
+            categories_blocked: HashMap::new(),
+        }];
+    }
+
+    let mut summaries = Vec::new();
+    for (name, rows) in &grouped {
+        summaries.push(build_summary(name, date, rows, top_n));
+    }
+    summaries.sort_by(|a, b| a.client_name.cmp(&b.client_name));
+    summaries
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::logger::db::QueryLog;
+    use chrono::Utc;
+
+    fn make_log(client_name: Option<&str>, domain: &str, blocked: bool) -> QueryLog {
+        QueryLog {
+            timestamp: Utc::now(),
+            client_ip: "192.168.1.100".to_string(),
+            client_name: client_name.map(|s| s.to_string()),
+            domain: domain.to_string(),
+            query_type: "A".to_string(),
+            blocked,
+            blocked_rule: if blocked { Some("custom_block".to_string()) } else { None },
+            category: if blocked { Some("custom".to_string()) } else { None },
+            resolved_ip: if !blocked { Some("1.2.3.4".to_string()) } else { None },
+            response_ms: 5,
+        }
+    }
+
+    #[test]
+    fn empty_logs_returns_single_all_devices() {
+        let summaries = build_from_logs(vec![], "2026-04-05", 10);
+        assert_eq!(summaries.len(), 1);
+        assert_eq!(summaries[0].client_name, "All Devices");
+        assert_eq!(summaries[0].total_queries, 0);
+    }
+
+    #[test]
+    fn groups_by_client_name() {
+        let logs = vec![
+            make_log(Some("Samir"), "youtube.com", false),
+            make_log(Some("Samir"), "roblox.com", false),
+            make_log(Some("Sara"), "khanacademy.org", false),
+        ];
+
+        let summaries = build_from_logs(logs, "2026-04-05", 10);
+        assert_eq!(summaries.len(), 2);
+
+        let samir = summaries.iter().find(|s| s.client_name == "Samir").unwrap();
+        assert_eq!(samir.total_queries, 2);
+
+        let sara = summaries.iter().find(|s| s.client_name == "Sara").unwrap();
+        assert_eq!(sara.total_queries, 1);
+    }
+
+    #[test]
+    fn no_client_name_groups_as_all_devices() {
+        let logs = vec![
+            make_log(None, "google.com", false),
+            make_log(None, "youtube.com", false),
+        ];
+
+        let summaries = build_from_logs(logs, "2026-04-05", 10);
+        assert_eq!(summaries.len(), 1);
+        assert_eq!(summaries[0].client_name, "All Devices");
+        assert_eq!(summaries[0].total_queries, 2);
+    }
+
+    #[test]
+    fn blocked_counts_are_per_client() {
+        let logs = vec![
+            make_log(Some("Samir"), "tiktok.com", true),
+            make_log(Some("Samir"), "tiktok.com", true),
+            make_log(Some("Samir"), "google.com", false),
+            make_log(Some("Sara"), "snapchat.com", true),
+        ];
+
+        let summaries = build_from_logs(logs, "2026-04-05", 10);
+
+        let samir = summaries.iter().find(|s| s.client_name == "Samir").unwrap();
+        assert_eq!(samir.total_queries, 3);
+        assert_eq!(samir.blocked_attempts, 2);
+
+        let sara = summaries.iter().find(|s| s.client_name == "Sara").unwrap();
+        assert_eq!(sara.total_queries, 1);
+        assert_eq!(sara.blocked_attempts, 1);
+    }
+
+    #[test]
+    fn top_domains_are_sorted_descending() {
+        let logs = vec![
+            make_log(Some("Samir"), "youtube.com", false),
+            make_log(Some("Samir"), "youtube.com", false),
+            make_log(Some("Samir"), "youtube.com", false),
+            make_log(Some("Samir"), "roblox.com", false),
+        ];
+
+        let summaries = build_from_logs(logs, "2026-04-05", 10);
+        let samir = &summaries[0];
+        assert_eq!(samir.top_domains[0].domain, "youtube.com");
+        assert_eq!(samir.top_domains[0].count, 3);
+        assert_eq!(samir.top_domains[1].domain, "roblox.com");
+        assert_eq!(samir.top_domains[1].count, 1);
+    }
+}

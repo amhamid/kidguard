@@ -1,11 +1,11 @@
 use serde_json::json;
 use tracing::{info, warn};
 
-use super::aggregator::DailySummary;
+use super::aggregator::ClientSummary;
 
-const SYSTEM_PROMPT: &str = r#"You are a parental monitoring assistant analyzing DNS activity from an 8-year-old child's device. Write a short, insightful daily report for the parent.
+const SYSTEM_PROMPT: &str = r#"You are a parental monitoring assistant analyzing DNS activity from a child's device. Write a short, insightful daily report for the parent.
 
-You will receive structured JSON with top domains, blocked attempts, hourly activity, and categories. Your job is to interpret this data — don't just restate the numbers.
+You will receive structured JSON with the child's name, top domains, blocked attempts, hourly activity, and categories. Your job is to interpret this data — don't just restate the numbers.
 
 Your report should have these sections:
 
@@ -17,9 +17,9 @@ Your report should have these sections:
 
 **One recommendation** — A single, specific, actionable suggestion. Not generic advice.
 
-Keep it under 250 words. Write warmly. Be honest but not alarmist. The parent is non-technical — use plain language, no domain names unless they help understanding."#;
+Keep it under 250 words. Write warmly. Be honest but not alarmist. The parent is non-technical — use plain language, no domain names unless they help understanding. Refer to the child by their name."#;
 
-/// Client for OpenAI GPT-4o analysis.
+/// Client for OpenAI GPT-5.4-mini analysis.
 pub struct OpenAiAnalyzer {
     api_key: String,
     client: reqwest::Client,
@@ -34,8 +34,8 @@ impl OpenAiAnalyzer {
         }
     }
 
-    /// Send the daily summary to GPT-4o and return the analysis text.
-    pub async fn analyze(&self, summary: &DailySummary) -> anyhow::Result<String> {
+    /// Send a client summary to GPT-5.4-mini and return the analysis text.
+    pub async fn analyze(&self, summary: &ClientSummary) -> anyhow::Result<String> {
         let user_message = serde_json::to_string_pretty(summary)?;
 
         let body = json!({
@@ -47,7 +47,7 @@ impl OpenAiAnalyzer {
             ]
         });
 
-        info!("Sending summary to OpenAI for analysis");
+        info!("Sending summary for '{}' to OpenAI for analysis", summary.client_name);
 
         let response = self
             .client
@@ -79,10 +79,10 @@ impl OpenAiAnalyzer {
 }
 
 /// Build a plain-text fallback summary when OpenAI is unavailable.
-fn build_fallback_summary(summary: &DailySummary) -> String {
+fn build_fallback_summary(summary: &ClientSummary) -> String {
     let mut text = format!(
-        "Daily Summary for {}\n\nTotal queries: {}\nUnique domains: {}\nBlocked attempts: {}\n",
-        summary.date, summary.total_queries, summary.unique_domains, summary.blocked_attempts
+        "Daily Summary for {} ({})\n\nTotal queries: {}\nUnique domains: {}\nBlocked attempts: {}\n",
+        summary.client_name, summary.date, summary.total_queries, summary.unique_domains, summary.blocked_attempts
     );
 
     if !summary.top_domains.is_empty() {

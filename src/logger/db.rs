@@ -9,6 +9,7 @@ use tracing::{error, info};
 pub struct QueryLog {
     pub timestamp: DateTime<Utc>,
     pub client_ip: String,
+    pub client_name: Option<String>,
     pub domain: String,
     pub query_type: String,
     pub blocked: bool,
@@ -65,11 +66,18 @@ impl DbLogger {
         .execute(&pool)
         .await?;
 
+        // Add client_name column if it doesn't exist (migration for existing DBs)
+        sqlx::query("ALTER TABLE dns_queries ADD COLUMN client_name TEXT")
+            .execute(&pool)
+            .await
+            .ok();
+
         // Create indexes (ignore errors if they already exist)
         for idx in &[
             "CREATE INDEX IF NOT EXISTS idx_timestamp ON dns_queries(timestamp)",
             "CREATE INDEX IF NOT EXISTS idx_domain ON dns_queries(domain)",
             "CREATE INDEX IF NOT EXISTS idx_blocked ON dns_queries(blocked)",
+            "CREATE INDEX IF NOT EXISTS idx_client_name ON dns_queries(client_name)",
         ] {
             sqlx::query(idx).execute(&pool).await?;
         }
@@ -92,11 +100,12 @@ impl DbLogger {
     /// Log a DNS query entry. Called fire-and-forget via tokio::spawn.
     pub async fn log(&self, entry: QueryLog) {
         let result = sqlx::query(
-            "INSERT INTO dns_queries (timestamp, client_ip, domain, query_type, blocked, blocked_rule, category, resolved_ip, response_ms)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO dns_queries (timestamp, client_ip, client_name, domain, query_type, blocked, blocked_rule, category, resolved_ip, response_ms)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(entry.timestamp.to_rfc3339())
         .bind(&entry.client_ip)
+        .bind(&entry.client_name)
         .bind(&entry.domain)
         .bind(&entry.query_type)
         .bind(entry.blocked as i32)
@@ -119,7 +128,7 @@ impl DbLogger {
         to: DateTime<Utc>,
     ) -> anyhow::Result<Vec<QueryLog>> {
         let rows = sqlx::query_as::<_, QueryLogRow>(
-            "SELECT timestamp, client_ip, domain, query_type, blocked, blocked_rule, category, resolved_ip, response_ms
+            "SELECT timestamp, client_ip, client_name, domain, query_type, blocked, blocked_rule, category, resolved_ip, response_ms
              FROM dns_queries
              WHERE timestamp >= ? AND timestamp <= ?
              ORDER BY timestamp",
@@ -158,6 +167,7 @@ impl DbLogger {
 struct QueryLogRow {
     timestamp: String,
     client_ip: String,
+    client_name: Option<String>,
     domain: String,
     query_type: String,
     blocked: i32,
@@ -174,6 +184,7 @@ impl From<QueryLogRow> for QueryLog {
                 .map(|dt| dt.with_timezone(&Utc))
                 .unwrap_or_else(|_| Utc::now()),
             client_ip: row.client_ip,
+            client_name: row.client_name,
             domain: row.domain,
             query_type: row.query_type,
             blocked: row.blocked != 0,

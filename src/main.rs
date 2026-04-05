@@ -71,7 +71,7 @@ async fn main() -> anyhow::Result<()> {
 
     // Build DNS forwarder and handler
     let forwarder = Arc::new(dns::forwarder::Forwarder::new(&app_config.dns)?);
-    let handler = dns::handler::DnsHandler::new(forwarder, matcher, db);
+    let handler = dns::handler::DnsHandler::new(forwarder, matcher, db, &app_config.dns.filtered_clients);
 
     // Run DNS server (blocks until shutdown)
     dns::server::run(&app_config, handler).await?;
@@ -99,10 +99,10 @@ async fn schedule_analysis(
             let email_reporter = email_reporter.clone();
             Box::pin(async move {
                 match analyzer::run(&config, &db, &api_key).await {
-                    Ok((summary, analysis)) => {
-                        tracing::info!("Daily analysis complete:\n{}", analysis);
+                    Ok(reports) => {
+                        tracing::info!("Daily analysis complete for {} client(s)", reports.len());
                         if let Some(ref reporter) = email_reporter {
-                            if let Err(e) = reporter.send(&summary, &analysis).await {
+                            if let Err(e) = reporter.send(&reports).await {
                                 tracing::error!("Failed to send report email: {}", e);
                             }
                         }

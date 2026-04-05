@@ -5,8 +5,14 @@ use lettre::transport::smtp::authentication::Credentials;
 use lettre::{AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor};
 use tracing::{error, info};
 
-use crate::analyzer::aggregator::DailySummary;
+use crate::analyzer::aggregator::ClientSummary;
 use crate::config::ReporterConfig;
+
+/// A client's summary paired with its AI analysis.
+pub struct ClientReport {
+    pub summary: ClientSummary,
+    pub analysis: String,
+}
 
 /// Sends daily report emails.
 pub struct EmailReporter {
@@ -35,10 +41,11 @@ impl EmailReporter {
         })
     }
 
-    /// Send a daily report email with stats and AI analysis to all recipients.
-    pub async fn send(&self, summary: &DailySummary, analysis: &str) -> anyhow::Result<()> {
-        let subject = format!("KidGuard Report -- {}", summary.date);
-        let html_body = build_html(summary, analysis);
+    /// Send a daily report email with per-client stats and AI analysis.
+    pub async fn send(&self, reports: &[ClientReport]) -> anyhow::Result<()> {
+        let date = reports.first().map(|r| r.summary.date.as_str()).unwrap_or("unknown");
+        let subject = format!("KidGuard Report -- {}", date);
+        let html_body = build_html(reports);
 
         let creds = Credentials::new(self.username.clone(), self.password.clone());
         let mailer = AsyncSmtpTransport::<Tokio1Executor>::starttls_relay(&self.smtp_host)?
@@ -64,14 +71,15 @@ impl EmailReporter {
     }
 }
 
-/// Build the HTML email body.
-fn build_html(summary: &DailySummary, analysis: &str) -> String {
+/// Build the HTML email body with per-client sections.
+fn build_html(reports: &[ClientReport]) -> String {
     let mut html = String::new();
 
     html.push_str(r#"<!DOCTYPE html><html><head><meta charset="utf-8"><style>
 body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; color: #333; }
 h1 { color: #2563eb; font-size: 22px; }
-h2 { color: #1e40af; font-size: 16px; margin-top: 24px; }
+h2 { color: #1e40af; font-size: 18px; margin-top: 32px; border-bottom: 2px solid #e2e8f0; padding-bottom: 8px; }
+h3 { color: #475569; font-size: 14px; margin-top: 20px; }
 .stats { display: flex; gap: 20px; margin: 16px 0; }
 .stat-box { background: #f0f9ff; border-radius: 8px; padding: 12px 16px; text-align: center; flex: 1; }
 .stat-num { font-size: 24px; font-weight: bold; color: #2563eb; }
@@ -81,14 +89,31 @@ th, td { text-align: left; padding: 6px 12px; border-bottom: 1px solid #e2e8f0; 
 th { background: #f8fafc; font-size: 12px; color: #64748b; text-transform: uppercase; }
 .hour-bar { background: #3b82f6; height: 14px; border-radius: 2px; display: inline-block; }
 .analysis { background: #fefce8; border-left: 4px solid #eab308; padding: 16px; margin: 16px 0; border-radius: 4px; }
+.client-section { margin-bottom: 40px; }
 .footer { font-size: 12px; color: #94a3b8; margin-top: 32px; border-top: 1px solid #e2e8f0; padding-top: 16px; }
 </style></head><body>"#);
 
-    // Header
+    let date = reports.first().map(|r| r.summary.date.as_str()).unwrap_or("unknown");
     html.push_str(&format!(
         "<h1>KidGuard Daily Report</h1><p style='color:#64748b'>{}</p>",
-        summary.date
+        date
     ));
+
+    for report in reports {
+        html.push_str("<div class='client-section'>");
+        build_client_section(&mut html, report);
+        html.push_str("</div>");
+    }
+
+    html.push_str("<div class='footer'>Sent by KidGuard</div></body></html>");
+    html
+}
+
+fn build_client_section(html: &mut String, report: &ClientReport) {
+    let summary = &report.summary;
+
+    // Client header
+    html.push_str(&format!("<h2>{}</h2>", summary.client_name));
 
     // Stats boxes
     html.push_str("<div class='stats'>");
@@ -108,7 +133,7 @@ th { background: #f8fafc; font-size: 12px; color: #64748b; text-transform: upper
 
     // Top domains table
     if !summary.top_domains.is_empty() {
-        html.push_str("<h2>Top Domains</h2><table><tr><th>Domain</th><th>Visits</th></tr>");
+        html.push_str("<h3>Top Domains</h3><table><tr><th>Domain</th><th>Visits</th></tr>");
         for (i, d) in summary.top_domains.iter().enumerate() {
             if i >= 10 {
                 break;
@@ -120,7 +145,7 @@ th { background: #f8fafc; font-size: 12px; color: #64748b; text-transform: upper
 
     // Blocked attempts table
     if !summary.top_blocked.is_empty() {
-        html.push_str("<h2>Blocked Attempts</h2><table><tr><th>Domain</th><th>Attempts</th></tr>");
+        html.push_str("<h3>Blocked Attempts</h3><table><tr><th>Domain</th><th>Attempts</th></tr>");
         for d in &summary.top_blocked {
             html.push_str(&format!("<tr><td>{}</td><td>{}</td></tr>", d.domain, d.count));
         }
@@ -135,7 +160,7 @@ th { background: #f8fafc; font-size: 12px; color: #64748b; text-transform: upper
         .max()
         .unwrap_or(1);
 
-    html.push_str("<h2>Activity by Hour</h2><table>");
+    html.push_str("<h3>Activity by Hour</h3><table>");
     for (hour, count) in &summary.queries_by_hour {
         if *count == 0 {
             continue;
@@ -149,19 +174,14 @@ th { background: #f8fafc; font-size: 12px; color: #64748b; text-transform: upper
     html.push_str("</table>");
 
     // AI Analysis
-    let analysis_html = analysis
+    let analysis_html = report.analysis
         .split('\n')
         .filter(|l| !l.is_empty())
         .map(|l| format!("<p>{}</p>", l))
         .collect::<Vec<_>>()
         .join("");
     html.push_str(&format!(
-        "<h2>AI Analysis</h2><div class='analysis'>{}</div>",
+        "<h3>AI Analysis</h3><div class='analysis'>{}</div>",
         analysis_html
     ));
-
-    // Footer
-    html.push_str("<div class='footer'>Sent by KidGuard</div></body></html>");
-
-    html
 }
