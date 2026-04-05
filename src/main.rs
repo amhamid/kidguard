@@ -89,10 +89,12 @@ async fn schedule_analysis(
     use tokio_cron_scheduler::{Job, JobScheduler};
 
     let schedule = config.analyzer.schedule.clone();
+    let tz: chrono_tz::Tz = config.analyzer.timezone.parse()
+        .map_err(|e| anyhow::anyhow!("Invalid timezone '{}': {}", config.analyzer.timezone, e))?;
     let sched = JobScheduler::new().await?;
 
     sched
-        .add(Job::new_async(schedule.as_str(), move |_uuid, _lock| {
+        .add(Job::new_async_tz(schedule.as_str(), tz, move |_uuid, _lock| {
             let config = config.clone();
             let db = db.clone();
             let api_key = api_key.clone();

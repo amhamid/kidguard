@@ -17,7 +17,7 @@ pub struct AppConfig {
 /// DNS server settings.
 #[derive(Debug, Clone, Deserialize)]
 pub struct DnsConfig {
-    pub listen_addr: String,
+    pub listen_addr: Vec<String>,
     pub upstream_servers: Vec<String>,
     pub timeout_ms: u64,
     /// If set, only these clients are filtered. All other clients pass through unfiltered.
@@ -64,8 +64,14 @@ pub struct DatabaseConfig {
 #[derive(Debug, Deserialize)]
 pub struct AnalyzerConfig {
     pub schedule: String,
+    #[serde(default = "default_timezone")]
+    pub timezone: String,
     pub lookback_days: i64,
     pub report_top_domains: usize,
+}
+
+fn default_timezone() -> String {
+    "UTC".to_string()
 }
 
 /// Email reporter settings.

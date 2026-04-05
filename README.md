@@ -92,7 +92,9 @@ Edit `config.yaml` to customize:
 
 ```yaml
 dns:
-  listen_addr: "0.0.0.0:53"      # Use 15353 for local testing without root
+  listen_addr:                     # Use port 15353 for local testing without root
+    - "0.0.0.0:53"                # IPv4
+    - "[::]:53"                   # IPv6
   upstream_servers:
     - "1.1.1.1:53"                # Cloudflare
     - "8.8.8.8:53"                # Google
@@ -115,7 +117,8 @@ blocklist:
     - "scratch.mit.edu"
 
 analyzer:
-  schedule: "TZ=Europe/Amsterdam 0 0 19 * * *"  # Daily at 19:00 Amsterdam time
+  schedule: "0 0 19 * * *"                       # Daily at 19:00
+  timezone: "Europe/Amsterdam"                    # IANA timezone
 
 reporter:
   to_email: "you@gmail.com"

@@ -41,3 +41,5 @@ anyhow = "1"
 thiserror = "1"
 chrono = { version = "0.4", features = ["serde"] }
 dotenv = "0.15"
+socket2 = "0.6.3"
+chrono-tz = "0.10.4"
