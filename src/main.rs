@@ -21,7 +21,7 @@ async fn main() -> anyhow::Result<()> {
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
                 .unwrap_or_else(|_| {
-                    "kidguard=info,hickory_server=warn,tokio_cron_scheduler=warn"
+                    "warn,kidguard=info,sqlx=error"
                         .parse()
                         .expect("valid default filter")
                 }),

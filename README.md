@@ -106,7 +106,38 @@ dns:
 
 blocklist:
   custom_block:
+    # TikTok & ByteDance (TikTok uses many domains — blocking tiktok.com alone is not enough)
     - "tiktok.com"
+    - "tiktokv.com"
+    - "tiktokw.eu"
+    - "tiktokv.eu"
+    - "tiktokcdn.com"
+    - "tiktokcdn-eu.com"
+    - "tiktokcdn-us.com"
+    - "musical.ly"
+    - "muscdn.com"
+    - "bytedance.com"
+    - "bytedance.net"
+    - "byteoversea.com"
+    - "byteoversea.net"
+    - "byteimg.com"
+    - "ibytedtos.com"
+    - "ibyteimg.com"
+    - "ipstatp.com"
+    - "sgpstatp.com"
+    - "ttwstatic.com"
+    - "ttdns2.com"
+    - "ttdns3.com"
+    # YouTube
+    - "youtube.com"
+    - "youtu.be"
+    - "youtubei.googleapis.com"
+    - "youtube-nocookie.com"
+    - "youtube-ui.l.google.com"
+    - "ytimg.com"
+    - "yt3.ggpht.com"
+    - "googlevideo.com"
+    # Social media
     - "snapchat.com"
     - "reddit.com"
     - "4chan.org"
@@ -282,4 +313,4 @@ src/
 | `OPENAI_API_KEY` | No | Enables AI-powered daily reports |
 | `SMTP_USERNAME` | No | Gmail address for sending reports |
 | `SMTP_PASSWORD` | No | Gmail app password (not your login password) |
-| `RUST_LOG` | No | Log level — `info` for production, `debug` for development |
+| `RUST_LOG` | No | Override log filter. Default is `warn,kidguard=info` (only shows filtered client activity). Set to `info` to see all DNS queries including unfiltered devices, or `debug` for verbose output |
