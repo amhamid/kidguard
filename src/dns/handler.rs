@@ -5,7 +5,7 @@ use std::time::Instant;
 use async_trait::async_trait;
 use chrono::Utc;
 use hickory_proto::op::{Header, ResponseCode};
-use hickory_proto::rr::{RData, Record};
+use hickory_proto::rr::{RData, Record, RecordType};
 use hickory_server::authority::MessageResponseBuilder;
 use hickory_server::server::{Request, RequestHandler, ResponseHandler, ResponseInfo};
 use tokio::sync::RwLock;
@@ -152,7 +152,7 @@ impl RequestHandler for DnsHandler {
 
         if let Some(result) = block_result {
             info!("[{}] BLOCKED {} (rule: {}, category: {})", display_name, domain, result.rule, result.category);
-            let response_info = send_nxdomain(request, &mut response_handle).await;
+            let response_info = send_blocked(request, &mut response_handle).await;
 
             // Fire-and-forget log
             let db = self.db.clone();
@@ -252,18 +252,48 @@ async fn send_response<R: ResponseHandler>(
     }
 }
 
-/// Send an NXDOMAIN response for blocked domains.
-async fn send_nxdomain<R: ResponseHandler>(
+/// Send a sinkhole response for blocked domains.
+/// Returns 0.0.0.0 (A) or :: (AAAA) instead of NXDOMAIN to prevent fallback DNS resolvers
+/// from retrying the query with another upstream server.
+async fn send_blocked<R: ResponseHandler>(
     request: &Request,
     response_handle: &mut R,
 ) -> ResponseInfo {
+    let query_type = request.query().query_type();
+    let name = request.query().name().into();
+    let ttl = 300; // 5 minutes
+
+    let records: Vec<Record> = match query_type {
+        RecordType::A => {
+            let rdata = RData::A("0.0.0.0".parse().unwrap());
+            vec![Record::from_rdata(name, ttl, rdata)]
+        }
+        RecordType::AAAA => {
+            let rdata = RData::AAAA("::".parse().unwrap());
+            vec![Record::from_rdata(name, ttl, rdata)]
+        }
+        _ => {
+            // For HTTPS/SVCB and other types, return NOERROR with empty answer
+            vec![]
+        }
+    };
+
     let builder = MessageResponseBuilder::from_message_request(request);
-    let response = builder.error_msg(request.header(), ResponseCode::NXDomain);
+    let mut header = Header::response_from_request(request.header());
+    header.set_response_code(ResponseCode::NoError);
+
+    let response = builder.build(
+        header,
+        records.iter(),
+        std::iter::empty(),
+        std::iter::empty(),
+        std::iter::empty(),
+    );
 
     match response_handle.send_response(response).await {
         Ok(info) => info,
         Err(e) => {
-            error!("Failed to send NXDOMAIN: {}", e);
+            error!("Failed to send blocked response: {}", e);
             servfail_info()
         }
     }

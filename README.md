@@ -13,7 +13,7 @@ Child's device ──DNS query──▶ KidGuard ──allowed──▶ Upstream
                                  │                          │
                                  │ blocked                  │
                                  ▼                          ▼
-                             NXDOMAIN               Real IP returned
+                             0.0.0.0                Real IP returned
                           (site won't load)         (site loads normally)
 ```
 
@@ -32,7 +32,7 @@ Subdomains are matched automatically — blocking `tiktok.com` also blocks `www.
 
 When a more specific rule exists, it wins. For example, if `roblox.com` is in `custom_allow` but `metrics.roblox.com` is in `custom_block`, then `metrics.roblox.com` is blocked while `roblox.com` and `cdn.roblox.com` are allowed.
 
-Blocked domains receive an `NXDOMAIN` response — the browser behaves as if the site doesn't exist.
+Blocked domains receive `0.0.0.0` (for A queries) or `::` (for AAAA queries) — the connection goes nowhere. This avoids `NXDOMAIN`, which can trigger fallback DNS resolvers (e.g. FritzBox, OS-level) to retry the query with another upstream server.
 
 ### Why DNS-Level Blocking Works
 
@@ -293,11 +293,20 @@ First, reserve a static IP for the machine running KidGuard (e.g. `192.168.1.50`
 ### 4. Verify
 
 ```bash
-dig @127.0.0.1 -p 53 google.com      # Should resolve
-dig @127.0.0.1 -p 53 roblox.com      # Should return NXDOMAIN (custom_block)
-dig @127.0.0.1 -p 53 tiktok.com      # Should return NXDOMAIN (custom_block)
-dig @127.0.0.1 -p 53 www.tiktok.com  # Should return NXDOMAIN (subdomain)
+dig @127.0.0.1 -p 53 google.com      # Should resolve to real IP
+dig @127.0.0.1 -p 53 roblox.com      # Should return 0.0.0.0 (custom_block)
+dig @127.0.0.1 -p 53 tiktok.com      # Should return 0.0.0.0 (custom_block)
+dig @127.0.0.1 -p 53 www.tiktok.com  # Should return 0.0.0.0 (subdomain)
 ```
+
+## IPv6 Support
+
+KidGuard listens on both IPv4 and IPv6 (`0.0.0.0:53` and `[::]:53`). Client identification via MAC address works for both:
+
+- **IPv4**: MAC is resolved via the ARP table (`/proc/net/arp`)
+- **IPv6**: MAC is resolved via the NDP neighbor table (`ip -6 neigh`)
+
+This is important because modern devices prefer IPv6 for DNS. If your router advertises an IPv6 DNS server, devices will use it by default. Without NDP support, IPv6 queries would bypass client filtering entirely — queries would be forwarded unblocked because the client couldn't be identified.
 
 ## Project Structure
 
