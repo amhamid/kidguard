@@ -133,7 +133,7 @@ fn build_client_section(html: &mut String, report: &ClientReport) {
 
     // Top domains table
     if !summary.top_domains.is_empty() {
-        html.push_str("<h3>Top Domains</h3><table><tr><th>Domain</th><th>Visits</th></tr>");
+        html.push_str("<h3>Top Domains</h3><table><tr><th>Domain</th><th>Subdomains</th></tr>");
         for (i, d) in summary.top_domains.iter().enumerate() {
             if i >= 10 {
                 break;

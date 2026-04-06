@@ -5,6 +5,22 @@ use serde::Serialize;
 
 use crate::logger::db::DbLogger;
 
+/// Extract the top-level registered domain from a full domain name.
+/// e.g. "cdn.roblox.com" → "roblox.com", "youtube.com" → "youtube.com"
+fn extract_top_domain(domain: &str) -> &str {
+    let parts: Vec<&str> = domain.rsplitn(3, '.').collect();
+    if parts.len() >= 2 {
+        // Return "sld.tld" — the start of the second-to-last label
+        let tld = parts[0];
+        let sld = parts[1];
+        // Calculate offset: domain ends with "sld.tld"
+        let suffix_len = sld.len() + 1 + tld.len(); // +1 for the dot
+        &domain[domain.len() - suffix_len..]
+    } else {
+        domain
+    }
+}
+
 /// Count of queries for a single domain.
 #[derive(Debug, Clone, Serialize)]
 pub struct DomainCount {
@@ -48,28 +64,37 @@ fn build_summary(
     top_n: usize,
 ) -> ClientSummary {
     let total_queries = rows.len() as u32;
-    let mut domain_counts: HashMap<String, u32> = HashMap::new();
-    let mut blocked_counts: HashMap<String, u32> = HashMap::new();
+    let mut domain_subdomains: HashMap<String, std::collections::HashSet<String>> = HashMap::new();
+    let mut blocked_subdomains: HashMap<String, std::collections::HashSet<String>> = HashMap::new();
     let mut hour_counts: HashMap<u8, u32> = HashMap::new();
     let mut category_counts: HashMap<String, u32> = HashMap::new();
     let mut blocked_attempts: u32 = 0;
 
     for row in rows {
-        *domain_counts.entry(row.domain.clone()).or_default() += 1;
+        let top_domain = extract_top_domain(&row.domain).to_string();
+        domain_subdomains.entry(top_domain.clone()).or_default().insert(row.domain.clone());
 
         let hour = row.timestamp.hour() as u8;
         *hour_counts.entry(hour).or_default() += 1;
 
         if row.blocked {
             blocked_attempts += 1;
-            *blocked_counts.entry(row.domain.clone()).or_default() += 1;
+            blocked_subdomains.entry(top_domain).or_default().insert(row.domain.clone());
             if let Some(ref cat) = row.category {
                 *category_counts.entry(cat.clone()).or_default() += 1;
             }
         }
     }
 
-    let unique_domains = domain_counts.len() as u32;
+    let unique_domains = domain_subdomains.len() as u32;
+    let domain_counts: HashMap<String, u32> = domain_subdomains
+        .into_iter()
+        .map(|(domain, subs)| (domain, subs.len() as u32))
+        .collect();
+    let blocked_counts: HashMap<String, u32> = blocked_subdomains
+        .into_iter()
+        .map(|(domain, subs)| (domain, subs.len() as u32))
+        .collect();
     let top_domains = top_n_from_map(&domain_counts, top_n);
     let top_blocked = top_n_from_map(&blocked_counts, top_n);
 
@@ -223,16 +248,56 @@ mod tests {
     fn top_domains_are_sorted_descending() {
         let logs = vec![
             make_log(Some("Samir"), "youtube.com", false),
-            make_log(Some("Samir"), "youtube.com", false),
-            make_log(Some("Samir"), "youtube.com", false),
+            make_log(Some("Samir"), "www.youtube.com", false),
+            make_log(Some("Samir"), "i.youtube.com", false),
             make_log(Some("Samir"), "roblox.com", false),
         ];
 
         let summaries = build_from_logs(logs, "2026-04-05", 10);
         let samir = &summaries[0];
+        // youtube.com has 3 unique subdomains, roblox.com has 1
         assert_eq!(samir.top_domains[0].domain, "youtube.com");
         assert_eq!(samir.top_domains[0].count, 3);
         assert_eq!(samir.top_domains[1].domain, "roblox.com");
         assert_eq!(samir.top_domains[1].count, 1);
+    }
+
+    #[test]
+    fn subdomains_collapse_to_top_domain() {
+        let logs = vec![
+            make_log(Some("Samir"), "roblox.com", false),
+            make_log(Some("Samir"), "cdn.roblox.com", false),
+            make_log(Some("Samir"), "metric.roblox.com", false),
+            make_log(Some("Samir"), "api.roblox.com", true),
+            make_log(Some("Samir"), "youtube.com", false),
+            make_log(Some("Samir"), "i.ytimg.com", false),
+        ];
+
+        let summaries = build_from_logs(logs, "2026-04-05", 10);
+        let samir = &summaries[0];
+
+        // All roblox subdomains collapse into one entry
+        assert_eq!(samir.unique_domains, 3); // roblox.com, youtube.com, ytimg.com
+
+        // Count = unique subdomains seen, not total queries
+        // roblox.com has 4 unique subdomains: roblox.com, cdn.roblox.com, metric.roblox.com, api.roblox.com
+        assert_eq!(samir.top_domains[0].domain, "roblox.com");
+        assert_eq!(samir.top_domains[0].count, 4);
+
+        // youtube.com and ytimg.com each have 1 unique subdomain
+        assert_eq!(samir.top_domains[1].count, 1);
+        assert_eq!(samir.top_domains[2].count, 1);
+
+        // Blocked: only api.roblox.com was blocked → 1 unique subdomain
+        assert_eq!(samir.top_blocked[0].domain, "roblox.com");
+        assert_eq!(samir.top_blocked[0].count, 1);
+    }
+
+    #[test]
+    fn extract_top_domain_works() {
+        assert_eq!(extract_top_domain("roblox.com"), "roblox.com");
+        assert_eq!(extract_top_domain("cdn.roblox.com"), "roblox.com");
+        assert_eq!(extract_top_domain("a.b.c.roblox.com"), "roblox.com");
+        assert_eq!(extract_top_domain("localhost"), "localhost");
     }
 }
