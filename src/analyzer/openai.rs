@@ -40,7 +40,7 @@ impl OpenAiAnalyzer {
 
         let body = json!({
             "model": "gpt-5.4-mini",
-            "max_tokens": 500,
+            "max_completion_tokens": 500,
             "messages": [
                 { "role": "system", "content": SYSTEM_PROMPT },
                 { "role": "user", "content": user_message }
