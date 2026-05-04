@@ -28,8 +28,14 @@ pub async fn run(
             summary.client_name, summary.total_queries, summary.unique_domains, summary.blocked_attempts
         );
 
-        let analysis = analyzer.analyze(&summary).await?;
-        info!("AI analysis complete for '{}'", summary.client_name);
+        let analysis = if summary.total_queries == 0 {
+            info!("No DNS activity for '{}', skipping AI analysis", summary.client_name);
+            String::new()
+        } else {
+            let result = analyzer.analyze(&summary).await?;
+            info!("AI analysis complete for '{}'", summary.client_name);
+            result
+        };
 
         reports.push(ClientReport { summary, analysis });
     }

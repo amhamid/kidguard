@@ -173,15 +173,17 @@ fn build_client_section(html: &mut String, report: &ClientReport) {
     }
     html.push_str("</table>");
 
-    // AI Analysis
-    let analysis_html = report.analysis
-        .split('\n')
-        .filter(|l| !l.is_empty())
-        .map(|l| format!("<p>{}</p>", l))
-        .collect::<Vec<_>>()
-        .join("");
-    html.push_str(&format!(
-        "<h3>AI Analysis</h3><div class='analysis'>{}</div>",
-        analysis_html
-    ));
+    // AI Analysis — omitted entirely when there was no activity to analyze
+    if !report.analysis.is_empty() {
+        let analysis_html = report.analysis
+            .split('\n')
+            .filter(|l| !l.is_empty())
+            .map(|l| format!("<p>{}</p>", l))
+            .collect::<Vec<_>>()
+            .join("");
+        html.push_str(&format!(
+            "<h3>AI Analysis</h3><div class='analysis'>{}</div>",
+            analysis_html
+        ));
+    }
 }
