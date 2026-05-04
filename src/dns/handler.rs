@@ -14,7 +14,7 @@ use tracing::{error, info};
 use crate::blocklist::matcher::BlocklistMatcher;
 use crate::config::FilteredClient;
 use crate::dns::arp;
-use crate::dns::forwarder::Forwarder;
+use crate::dns::forwarder::{ForwardOutcome, Forwarder};
 use crate::logger::db::{DbLogger, QueryLog};
 
 /// Client filtering logic — determines which clients should be filtered and resolves their names.
@@ -135,7 +135,12 @@ impl RequestHandler for DnsHandler {
         if !should_filter {
             // Unfiltered client — forward silently, no logging
             let response_info = match self.forwarder.forward(request.query().name(), query_type).await {
-                Ok(records) => send_response(request, &mut response_handle, &records).await,
+                Ok(ForwardOutcome::Records(records)) => {
+                    send_response(request, &mut response_handle, &records, ResponseCode::NoError).await
+                }
+                Ok(ForwardOutcome::Empty(code)) => {
+                    send_response(request, &mut response_handle, &[], code).await
+                }
                 Err(_) => send_servfail(request, &mut response_handle).await,
             };
             return response_info;
@@ -175,10 +180,14 @@ impl RequestHandler for DnsHandler {
 
         // Forward to upstream
         let (response_info, resolved_ip) = match self.forwarder.forward(request.query().name(), query_type).await {
-            Ok(records) => {
+            Ok(ForwardOutcome::Records(records)) => {
                 let resolved_ip = extract_first_ip(&records);
-                let info = send_response(request, &mut response_handle, &records).await;
+                let info = send_response(request, &mut response_handle, &records, ResponseCode::NoError).await;
                 (info, resolved_ip)
+            }
+            Ok(ForwardOutcome::Empty(code)) => {
+                let info = send_response(request, &mut response_handle, &[], code).await;
+                (info, None)
             }
             Err(e) => {
                 error!("[{}] Forward error for {}: {}", display_name, domain, e);
@@ -225,15 +234,18 @@ fn extract_first_ip(records: &[Record]) -> Option<String> {
     None
 }
 
-/// Send a successful DNS response with the given records.
+/// Send a DNS response with the given records and response code.
+/// `records` may be empty — combined with `ResponseCode::NoError` that is a NODATA reply,
+/// combined with `ResponseCode::NXDomain` it is an NXDOMAIN reply.
 async fn send_response<R: ResponseHandler>(
     request: &Request,
     response_handle: &mut R,
     records: &[Record],
+    response_code: ResponseCode,
 ) -> ResponseInfo {
     let builder = MessageResponseBuilder::from_message_request(request);
     let mut header = Header::response_from_request(request.header());
-    header.set_response_code(ResponseCode::NoError);
+    header.set_response_code(response_code);
 
     let response = builder.build(
         header,
